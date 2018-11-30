@@ -347,6 +347,7 @@ from .jtag_mips import JTAGMIPSApplet
 from .jtag_pinout import JTAGPinoutApplet
 from .jtag_svf import JTAGSVFApplet
 from .jtag_xc9500 import JTAGXC9500Applet
+from .lpc_monitor import LPCMonitorApplet
 from .nand_flash import NANDFlashApplet
 from .program_ice40 import ProgramICE40Applet
 from .selftest import SelfTestApplet
