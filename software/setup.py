@@ -53,7 +53,10 @@ setup(
         "libusb1>=1.6.6",
         "aiohttp",
         "pyvcd",
+        # The bitarray library turned to be a bad choice, so that's why we have two of them.
+        # Ideally everyone should use only bitstring.
         "bitarray",
+        "bitstring",
         "crcmod",
     ],
     dependency_links=[
