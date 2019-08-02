@@ -391,12 +391,12 @@ class JTAGProbeInterface:
                 CMD_SHIFT_TDIO|(BIT_LAST if last else 0), count))
         self._shift_last(last)
 
-    async def pulse_tck(self, count):
+    async def pulse_tck(self, count, idle_tdi=False):
         assert self._state in ("Run-Test/Idle", "Pause-IR", "Pause-DR")
         self._log_l("pulse tck count=%d", count)
         for count, last in self._chunk_count(count, last=True):
             await self.lower.write(struct.pack("<BH",
-                CMD_SHIFT_TDIO, count))
+                CMD_SHIFT_TDIO|(BIT_TDI if idle_tdi else 0), count))
 
     # State machine transitions
 
