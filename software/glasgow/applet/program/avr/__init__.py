@@ -64,8 +64,8 @@ class ProgramAVRInterface(metaclass=ABCMeta):
     async def read_fuse(self, address):
         raise NotImplementedError
 
-    async def read_fuse_range(self, addresses):
-        return bytearray([await self.read_fuse(address) for address in addresses])
+    async def read_fuse_range(self, start, length):
+        return bytearray([await self.read_fuse(addr) for addr in range(start, length)])
 
     @abstractmethod
     async def write_fuse(self, address, data):
@@ -83,15 +83,15 @@ class ProgramAVRInterface(metaclass=ABCMeta):
     async def read_calibration(self, address):
         raise NotImplementedError
 
-    async def read_calibration_range(self, addresses):
-        return bytearray([await self.read_calibration(address) for address in addresses])
+    async def read_calibration_range(self, start, length):
+        return bytearray([await self.read_calibration(addr) for addr in range(start, length)])
 
     @abstractmethod
     async def read_program_memory(self, address):
         raise NotImplementedError
 
-    async def read_program_memory_range(self, addresses):
-        return bytearray([await self.read_program_memory(address) for address in addresses])
+    async def read_program_memory_range(self, start, length):
+        return bytearray([await self.read_program_memory(addr) for addr in range(start, length)])
 
     @abstractmethod
     async def load_program_memory_page(self, address, data):
@@ -120,8 +120,8 @@ class ProgramAVRInterface(metaclass=ABCMeta):
     async def read_eeprom(self, address):
         raise NotImplementedError
 
-    async def read_eeprom_range(self, addresses):
-        return bytearray([await self.read_eeprom(address) for address in addresses])
+    async def read_eeprom_range(self, start, length):
+        return bytearray([await self.read_eeprom(addr) for addr in range(start, length)])
 
     @abstractmethod
     async def load_eeprom_page(self, address, data):
@@ -239,7 +239,7 @@ class ProgramAVRApplet(GlasgowApplet):
 
         if args.operation == "read":
             if args.fuses:
-                fuses = await avr_iface.read_fuse_range(range(device.fuses_size))
+                fuses = await avr_iface.read_fuse_range(0, device.fuses_size)
                 if device.fuses_size > 2:
                     self.logger.info("fuses: low %s high %s extra %s",
                                      "{:08b}".format(fuses[0]),
@@ -258,7 +258,7 @@ class ProgramAVRApplet(GlasgowApplet):
 
             if args.calibration:
                 calibration = \
-                    await avr_iface.read_calibration_range(range(device.calibration_size))
+                    await avr_iface.read_calibration_range(0, device.calibration_size)
                 self.logger.info("calibration bytes: %s",
                                  " ".join(["%02x" % b for b in calibration]))
 
@@ -266,13 +266,13 @@ class ProgramAVRApplet(GlasgowApplet):
                 self._check_format(args.program, "program memory")
                 self.logger.info("reading program memory (%d bytes)", device.program_size)
                 output_data(args.program,
-                    await avr_iface.read_program_memory_range(range(device.program_size)))
+                    await avr_iface.read_program_memory_range(0, device.program_size))
 
             if args.eeprom:
                 self._check_format(args.eeprom, "EEPROM")
                 self.logger.info("reading EEPROM (%d bytes)", device.eeprom_size)
                 output_data(args.eeprom,
-                    await avr_iface.read_eeprom_range(range(device.eeprom_size)))
+                    await avr_iface.read_eeprom_range(0, device.eeprom_size))
 
         if args.operation == "write-fuses":
             if args.high and device.fuses_size < 2:
@@ -321,7 +321,7 @@ class ProgramAVRApplet(GlasgowApplet):
             for address, chunk in data:
                 chunk = bytes(chunk)
                 await avr_iface.write_program_memory_range(address, chunk, device.program_page)
-                written = await avr_iface.read_program_memory_range(range(address, address + len(chunk)))
+                written = await avr_iface.read_program_memory_range(address, len(chunk))
                 if written != chunk:
                     raise ProgramAVRError("verification failed at address %#06x: %s != %s" %
                                           (address, written.hex(), chunk.hex()))
@@ -334,7 +334,7 @@ class ProgramAVRApplet(GlasgowApplet):
             for address, chunk in data:
                 chunk = bytes(chunk)
                 await avr_iface.write_eeprom_range(address, chunk, device.eeprom_page)
-                written = await avr_iface.read_eeprom_range(range(address, len(chunk)))
+                written = await avr_iface.read_eeprom_range(address, len(chunk))
                 if written != chunk:
                     raise ProgramAVRError("verification failed at address %#06x: %s != %s" %
                                           (address, written.hex(), chunk.hex()))

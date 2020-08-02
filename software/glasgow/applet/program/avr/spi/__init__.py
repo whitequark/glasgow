@@ -84,6 +84,11 @@ class ProgramAVRSPIInterface(ProgramAVRInterface):
             signature.append(sig_byte)
         return tuple(signature)
 
+    async def read_calibration(self, address):
+        self._log("read calibration address %#04x", address)
+        _, _, _, data = await self._command(0b0011_1000, 0b0000_0000, address, 0)
+        return data
+
     async def read_fuse(self, address):
         self._log("read fuse address %#04x", address)
         a0, a1 = {
