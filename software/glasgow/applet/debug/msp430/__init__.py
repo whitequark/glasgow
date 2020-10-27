@@ -57,31 +57,32 @@ class MSP430DebugInterface(aobject):
         self._logger = logger
         self._level  = logging.DEBUG if self._logger.name == __name__ else logging.TRACE
 
-        self.jtag_id   = None
-        self._family   = None
-        self.device_id = None
-        self._core     = None
-        self.device    = None
-        await self._probe_jtag()
+        self.device  = None
+        self._family = None
+        self._core   = None
+
+        # We can probe the family unobtrusively, so do it now. We can only probe the core after
+        # we stop the target.
+        await self._probe_family()
 
     def _log(self, message, *args, level=None):
         self._logger.log(self._level if level is None else level, "MSP430: " + message, *args)
 
-    async def _probe_jtag(self):
+    # Helper functions for working with JTAG.
+
+    async def _probe_family(self):
         await self.lower.test_reset()
 
         jtag_id_bits = await self.lower.read_ir(8)
-        self.jtag_id = int(jtag_id_bits.reversed())
-        if self.jtag_id not in (0x89, 0x91, 0x98, 0x99):
-            raise MSP430DebugError("unknown JTAG ID {:#04x}".format(self.jtag_id))
-        self._log("found core with JTAG ID %#04x", self.jtag_id,
-                  level=logging.INFO)
-        if self.jtag_id == 0x89:
+        jtag_id = int(jtag_id_bits.reversed())
+        self._log("discover jtag-id=%#04x", jtag_id)
+        if jtag_id == 0x89:
             self._family = "124"
-        else:
+        elif jtag_id in (0x91, 0x98, 0x99):
             self._family = "56"
+        else:
+            raise MSP430DebugError("unknown JTAG ID {:#04x}".format(jtag_id))
         self._log("discover family=%s", self._family)
-        # self._core will be set later, in target_stop().
 
     @property
     def _DR_CNTRL_SIG(self):
@@ -117,9 +118,13 @@ class MSP430DebugInterface(aobject):
     @property
     def _address_width(self):
         if self._family == "124":
-            if self._core in (None, "430"):
+            if self._core is None:
+                # Because of the bit permutation in the MAB DR, using 16 bits on cores with 20 bit
+                # address bus results in addressing the lowest part of the address space.
                 return 16
-            if self.core in ("430X", "430Xv2"):
+            if self._core == "430":
+                return 16
+            if self._core in ("430X", "430Xv2"):
                 return 20
         if self._family == "56":
             return 20
@@ -138,9 +143,26 @@ class MSP430DebugInterface(aobject):
         data_bits = await self.lower.read_dr(16)
         return int(data_bits.reversed())
 
-    async def _ensure_instr_fetch(self):
+    # Helper functions for controlling the CPU, closely corresponding to TI programming reference.
+
+    async def _get_device(self):
+        if self._family == "124":
+            # Reference function: GetDevice/GetDevice_430X
+            self._log("cpu state=Controlled")
+            await self._write_control(TCE1=1)
+            cntrl_sig = await self._read_control()
+            if not cntrl_sig.TCE:
+                raise MSP430DebugError("cannot stop target")
+        elif self._family == "56":
+            # Reference function: GetDevice_430Xv2
+            raise NotImplementedError # FIXME
+        else:
+            assert False
+
+    async def _set_instr_fetch(self):
         # Reference function: SetInstrFetch
-        self._log("set mode=Instruction-Fetch")
+        assert self._family == "124"
+        self._log("cpu state=Instruction-Fetch")
         cntrl_sig = await self._read_control()
         attempts = 0
         while not cntrl_sig.INSTR_LOAD and attempts < 7:
@@ -153,6 +175,82 @@ class MSP430DebugInterface(aobject):
             # mode. If not (bit [INSTR_LOAD] = 1), a JTAG access error has occurred and a JTAG
             # reset is recommended.
             raise MSP430DebugError("target stuck in Instruction-Execute mode")
+
+    async def _halt_cpu(self):
+        # Reference function: HaltCPU
+        assert self._family == "124"
+        self._log("cpu state=Halt")
+        await self._ensure_instr_fetch()
+        await self._write_data_dr(0x3FFF) # JMP $
+        await self.lower.set_tclk(0)
+        await self._write_control(HALT_JTAG=1)
+        await self.lower.set_tclk(1)
+
+    async def _release_bus(self):
+        # Reference function: ReleaseCPU
+        assert self._family == "124"
+        self._log("cpu state=Instruction-Fetch")
+        await self.lower.set_tclk(0)
+        await self._write_control()
+        await self.lower.write_ir(IR_ADDR_CAPTURE)
+        await self.lower.set_tclk(1)
+
+    async def _execute_por(self):
+        # Reference function: ExecutePOR
+        self._log("power-on reset")
+        await self._write_control(POR=1)
+        await self._write_control(POR=0)
+        await self.lower.set_tclk(0)
+        await self.lower.set_tclk(1)
+        await self.lower.set_tclk(0)
+        await self.lower.set_tclk(1)
+        await self.lower.set_tclk(0)
+        await self.lower.write_ir(IR_ADDR_CAPTURE)
+        await self.lower.set_tclk(1)
+
+    async def _read_memory(self, address, *, byte):
+        if self._family == "124":
+            # Reference function: ReadMem/ReadMem_430X
+            await self.lower.set_tclk(0)
+            await self._write_control(R_W=1, BYTE=byte, HALT_JTAG=1)
+            await self.lower.write_ir(IR_ADDR_16BIT)
+            await self._write_address_dr(address)
+            await self.lower.write_ir(IR_DATA_TO_ADDR)
+            await self.lower.set_tclk(1)
+            await self.lower.set_tclk(0)
+            value = await self._read_data_dr()
+        elif self._family == "56":
+            # Reference function: ReadMem_430Xv2
+            raise NotImplementedError # FIXME
+        else:
+            assert False
+        if byte:
+            value &= 0xff
+            self._log("read memory byte [%#07x]=%#04x", address, value)
+        else: # word
+            self._log("read memory word [%#07x]=%#06x", address, value)
+        return value
+
+    async def _write_memory(self, address, value, *, byte):
+        if byte:
+            value &= 0xff
+            self._log("write memory byte [%#07x]=%#04x", address, value)
+        else: # word
+            self._log("write memory word [%#07x]=%#06x", address, value)
+        if self._family == "124":
+            # Reference function: WriteMem/WriteMem_430X
+            await self.lower.set_tclk(0)
+            await self._write_control(R_W=0, BYTE=byte, HALT_JTAG=1)
+            await self.lower.write_ir(IR_ADDR_16BIT)
+            await self._write_address_dr(address)
+            await self.lower.write_ir(IR_DATA_TO_ADDR)
+            await self._write_data_dr(value)
+            await self.lower.set_tclk(1)
+        elif self._family == "56":
+            # Reference function: WriteMem_430Xv2
+            raise NotImplementedError # FIXME
+        else:
+            assert False
 
     async def _set_pc(self, pc_value):
         self._log("set pc=%#07x", pc_value)
@@ -175,24 +273,29 @@ class MSP430DebugInterface(aobject):
         else:
             assert False
 
-    async def _acquire_bus(self):
-        # Reference function: HaltCPU
-        assert self._family == "124"
-        self._log("bus acquire")
-        await self._ensure_instr_fetch()
-        await self._write_data_dr(0x3FFF) # FIXME
-        await self.lower.set_tclk(0)
-        await self._write_control(HALT_JTAG=1)
-        await self.lower.set_tclk(1)
-
-    async def _release_bus(self):
-        # Reference function: ReleaseCPU
-        assert self._family == "124"
-        self._log("bus release")
-        await self.lower.set_tclk(0)
-        await self._write_control()
-        await self.lower.write_ir(IR_ADDR_CAPTURE)
-        await self.lower.set_tclk(1)
+    async def _probe_core(self):
+        assert self.device is None
+        jtag_id_bits = await self.lower.read_ir(8)
+        jtag_id = int(jtag_id_bits.reversed())
+        if self._family == "124":
+            device_id_bytes = await self.target_read_memory(0x0ff0, 2)
+        elif self._family == "56":
+            device_id_bytes = await self.target_read_memory(0x1a04, 2)
+        else:
+            assert False
+        device_id, = struct.unpack(">H", device_id_bytes)
+        self._log("discover jtag-id=%#04x device-id=%#06x", jtag_id, device_id)
+        if jtag_id in devices_by_ids:
+            if device_id in devices_by_ids[jtag_id]:
+                devices_by_ext_id = devices_by_ids[jtag_id][device_id]
+                assert len(devices_by_ext_id) == 1 and None in devices_by_ext_id # FIXME
+                self.device = devices_by_ext_id[None]
+        if self.device is None:
+            raise MSP430DebugError("unknown device ID {:#06x}".format(device_id))
+        self._core = self.device.core
+        self._log("discover core=%s", self._core)
+        self._log("attached to target %s", self.device.name,
+                  level=logging.INFO)
 
     # Public API / GDB remote implementation
 
@@ -207,43 +310,10 @@ class MSP430DebugInterface(aobject):
 
     async def target_stop(self):
         self._log("target stop")
-        if self._family == "124":
-            # Reference function: GetDevice/GetDevice_430X
-            await self._write_control(TCE1=1)
-        elif self._family == "56":
-            # Reference function: GetDevice_430Xv2
-            raise NotImplementedError # FIXME
-        else:
-            assert False
-        cntrl_sig = await self._read_control()
-        if not cntrl_sig.TCE:
-            raise MSP430DebugError("cannot stop target")
-        if self.device_id is None:
-            # And now we can determine which specific device it is.
-            if self._family == "124":
-                device_id_bytes = await self.target_read_memory(0x0ff0, 2)
-            elif self._family == "56":
-                device_id_bytes = await self.target_read_memory(0x1a04, 2)
-            else:
-                assert False
-            self.device_id, = struct.unpack(">H", device_id_bytes)
-            self._log("discover device-id=%#06x", self.device_id)
-            if self._family == "124":
-                self._core = "430" # FIXME
-            elif self._family == "56":
-                self._core = "430Xv2"
-            else:
-                assert False
-            self._log("discover core=%s", self._core)
-        if self.jtag_id in devices_by_ids:
-            if self.device_id in devices_by_ids[self.jtag_id]:
-                devices_by_ext_id = devices_by_ids[self.jtag_id][self.device_id]
-                assert len(devices_by_ext_id) == 1 and None in devices_by_ext_id
-                self.device = devices_by_ext_id[None]
-        self._log("attached to target %s (device ID %#06x, core %s)",
-                  "(unknown)" if self.device is None else self.device.name,
-                  self.device_id, self._core,
-                  level=logging.INFO)
+        await self._get_device()
+        if self._core is None:
+            # Now that we stopped the target, we can determine which specific device it is.
+            await self._probe_core()
 
     async def target_reset(self):
         # Reference function: ExecutePOR
@@ -277,24 +347,21 @@ class MSP430DebugInterface(aobject):
                   level=logging.INFO)
 
     async def target_read_memory(self, address, length):
-        assert address % 2 == 0 and length % 2 == 0
         data = bytearray()
         if self._family == "124":
             # Reference function: ReadMem/ReadMem_430X
             await self._acquire_bus()
-            await self.lower.set_tclk(0)
-            await self._write_control(R_W=1, HALT_JTAG=1)
             offset = 0
             while offset < length:
-                await self.lower.write_ir(IR_ADDR_16BIT)
-                await self._write_address_dr(address + offset)
-                await self.lower.write_ir(IR_DATA_TO_ADDR)
-                await self.lower.set_tclk(1)
-                await self.lower.set_tclk(0)
-                data_word = await self._read_data_dr()
-                self._log("read memory [%#07x]=%#06x", address + offset, data_word)
-                data   += struct.pack("<H", data_word)
-                offset += 2
+                pointer = address + offset
+                if pointer % 2 == 1 or length - offset == 1: # byte
+                    value = await self._read_memory(pointer, byte=True)
+                    data   += struct.pack("<B", value)
+                    offset += 1
+                else: # word
+                    value = await self._read_memory(pointer, byte=False)
+                    data   += struct.pack("<H", value)
+                    offset += 2
             await self._release_bus()
         elif self._family == "56":
             # Reference function: ReadMem_430Xv2
@@ -304,23 +371,21 @@ class MSP430DebugInterface(aobject):
         return data
 
     async def target_write_memory(self, address, data):
-        assert address % 2 == 0 and len(data) % 2 == 0
+        # assert address % 2 == 0 and len(data) % 2 == 0
         if self._family == "124":
             # Reference function: WriteMem/WriteMem_430X
             await self._acquire_bus()
-            await self.lower.set_tclk(0)
-            await self._write_control(R_W=0, HALT_JTAG=1)
             offset = 0
             while offset < len(data):
-                data_word, = struct.unpack_from("<H", data, offset)
-                self._log("write memory [%#07x]=%#06x", address + offset, data_word)
-                await self.lower.set_tclk(0)
-                await self.lower.write_ir(IR_ADDR_16BIT)
-                await self._write_address_dr(address + offset)
-                await self.lower.write_ir(IR_DATA_TO_ADDR)
-                await self._write_data_dr(data_word)
-                await self.lower.set_tclk(1)
-                offset += 2
+                pointer = address + offset
+                if pointer % 2 == 1 or len(data) - offset == 1: # byte
+                    value,  = struct.unpack_from("<B", data, offset)
+                    await self._write_memory(pointer, value, byte=True)
+                    offset += 1
+                else: # word
+                    value,  = struct.unpack_from("<H", data, offset)
+                    await self._write_memory(pointer, value, byte=False)
+                    offset += 1
             await self._release_bus()
             return data
         elif self._family == "56":
