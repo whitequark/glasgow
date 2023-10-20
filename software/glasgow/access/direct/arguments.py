@@ -57,6 +57,7 @@ class DirectArguments(AccessArguments):
             type = self._mandatory_pin_number
             if default is not None:
                 required = False
+            help += " (required)"
         else:
             type = self._optional_pin_number
 
@@ -90,6 +91,8 @@ class DirectArguments(AccessArguments):
                 help += " (default: %(default)s)"
             else:
                 help += " (default is empty)"
+        if required:
+            help += " (required)"
 
         opt_name = "--pins-" + name.lower().replace("_", "-")
         parser.add_argument(
