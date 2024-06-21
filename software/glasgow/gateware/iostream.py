@@ -8,7 +8,6 @@ from glasgow.gateware.ports import PortGroup
 __all__ = ["IOStream"]
 
 
-@staticmethod
 def _iter_parts(port, *args):
     if isinstance(port, io.PortLike):
         yield args
@@ -17,7 +16,6 @@ def _iter_parts(port, *args):
             yield tuple(arg[name] for arg in args)
 
 
-@staticmethod
 def _map_parts(port, fn):
     if isinstance(port, io.PortLike):
         return fn(port)

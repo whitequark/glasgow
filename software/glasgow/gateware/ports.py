@@ -25,7 +25,7 @@ class PortGroup:
         return self.__dict__[key]
 
 
-# FIXME: needs to be upstream in Amaranth amaranth-lang/amaranth#1417
+# FIXME: needs to be upstream in Amaranth amaranth-lang/amaranth#1446
 class SimulationPort(io.PortLike):
     def __init__(self, width, *, invert=False, direction, name=None, src_loc_at=0):
         if name is not None and not isinstance(name, str):
@@ -129,7 +129,7 @@ class SimulationPort(io.PortLike):
         return result
 
 
-# FIXME: won't be needed once SimulationPort is in upstream Amaranth amaranth-lang/amaranth#1417
+# FIXME: won't be needed once SimulationPort is in upstream Amaranth amaranth-lang/amaranth#1446
 class SimulationPlatform:
     def get_io_buffer(self, buffer):
         if isinstance(buffer.port, SimulationPort):

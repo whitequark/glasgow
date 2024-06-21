@@ -311,7 +311,7 @@ class QSPITestCase(unittest.TestCase):
 
         testbench_flash = simulate_flash(ports, memory=b"nya nya awa!nya nyaaaaan")
 
-        # FIXME: amaranth-lang/amaranth#1417
+        # FIXME: amaranth-lang/amaranth#1446
         sim = Simulator(Fragment.get(dut, SimulationPlatform()))
         sim.add_clock(1e-6)
         sim.add_testbench(testbench_controller)

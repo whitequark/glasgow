@@ -50,7 +50,7 @@ class IOStreamTestCase(unittest.TestCase):
             await ctx.tick()
             assert ctx.get(dut.i_stream.valid) == 0
 
-        # FIXME: amaranth-lang/amaranth#1417
+        # FIXME: amaranth-lang/amaranth#1446
         sim = Simulator(Fragment.get(dut, SimulationPlatform()))
         sim.add_clock(1e-6)
         sim.add_testbench(testbench)
@@ -143,7 +143,7 @@ class IOStreamTestCase(unittest.TestCase):
             assert i_stream_p.port.i[0] == 0b1001, f"{i_stream_p.i[0]:#06b}"
             assert i_stream_p.meta == 0b1001, f"{i_stream_p.meta:#06b}"
 
-        # FIXME: amaranth-lang/amaranth#1417
+        # FIXME: amaranth-lang/amaranth#1446
         sim = Simulator(Fragment.get(dut, SimulationPlatform()))
         sim.add_clock(1e-6)
         sim.add_testbench(testbench)
