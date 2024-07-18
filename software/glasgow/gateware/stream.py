@@ -56,7 +56,7 @@ class AsyncQueue(wiring.Component):
         m = Module()
 
         m.submodules.fifo = inner = fifo.AsyncFIFO(
-            width=Shape.cast(self._shape).width, depth=self._depth, exact_depth=True,
+            width=Shape.cast(self._shape).width, depth=self._depth,
             w_domain=self._w_domain, r_domain=self._r_domain)
         wiring.connect(m, wiring.flipped(self.write), inner.w_stream)
         wiring.connect(m, wiring.flipped(self.read), inner.r_stream)

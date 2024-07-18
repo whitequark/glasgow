@@ -276,10 +276,10 @@ class QSPIController(wiring.Component):
         ]
 
         m.d.comb += [
-            deframer.frames.p.port.io0.i.eq(iostream.i_stream.p.port.io0.i[0]),
-            deframer.frames.p.port.io1.i.eq(iostream.i_stream.p.port.io1.i[0]),
-            deframer.frames.p.port.io2.i.eq(iostream.i_stream.p.port.io2.i[0]),
-            deframer.frames.p.port.io3.i.eq(iostream.i_stream.p.port.io3.i[0]),
+            deframer.frames.p.port.io0.i.eq(iostream.i_stream.p.port.io0.i[-1]),
+            deframer.frames.p.port.io1.i.eq(iostream.i_stream.p.port.io1.i[-1]),
+            deframer.frames.p.port.io2.i.eq(iostream.i_stream.p.port.io2.i[-1]),
+            deframer.frames.p.port.io3.i.eq(iostream.i_stream.p.port.io3.i[-1]),
             deframer.frames.p.meta.eq(iostream.i_stream.p.meta),
             deframer.frames.valid.eq(iostream.i_stream.valid),
             iostream.i_stream.ready.eq(deframer.frames.ready),

@@ -140,8 +140,14 @@ class IOStream(wiring.Component):
         with m.Elif((skid_at != 0) & self.i_stream.ready):
             m.d.sync += skid_at.eq(skid_at - 1)
 
-        m.d.comb += self.i_stream.payload.eq(skid[skid_at])
-        m.d.comb += self.i_stream.valid.eq(i_en | (skid_at != 0))
-        m.d.comb += self.o_stream.ready.eq(self.i_stream.ready & (skid_at == 0))
+        if True:
+            with m.If(self.o_stream.ready | ~self.i_stream.valid):
+                m.d.sync += self.i_stream.payload.eq(skid[skid_at])
+                m.d.sync += self.i_stream.valid.eq(i_en | (skid_at != 0))
+            m.d.comb += self.o_stream.ready.eq(self.i_stream.ready & (skid_at == 0))
+        else:
+            m.d.comb += self.i_stream.payload.eq(skid[skid_at])
+            m.d.comb += self.i_stream.valid.eq(i_en | (skid_at != 0))
+            m.d.comb += self.o_stream.ready.eq(self.i_stream.ready & (skid_at == 0))
 
         return m

@@ -6,6 +6,7 @@ from amaranth.lib import enum, data, wiring, stream, io, cdc
 from amaranth.lib.wiring import In, Out, connect, flipped
 
 from ....support.logging import *
+from ....gateware.pll import PLL
 from ....gateware.qspi import QSPIMode, QSPIController
 from ....gateware.stream import Queue, AsyncQueue
 from ... import *
@@ -30,13 +31,15 @@ class QSPIControllerSubtarget(Elaboratable):
         m = Module()
 
         m.domains.qspi = cd_qspi = ClockDomain(async_reset=False)
-        m.d.comb += cd_qspi.clk.eq(ClockSignal())
 
-        m.submodules += cdc.ResetSynchronizer(ResetSignal(), domain="qspi")
+        # m.d.comb += cd_qspi.clk.eq(ClockSignal())
+        # m.submodules += cdc.ResetSynchronizer(ResetSignal(), domain="qspi")
+
+        m.submodules.pll = PLL(48e6, 80e6, "qspi")
 
         m.submodules.qspi = qspi = DomainRenamer("qspi")(
             QSPIController(self._ports, use_ddr_buffers=False))
-        m.d.comb += qspi.divisor.eq(self._divisor)
+        m.d.comb += qspi.divisor.eq(1)#self._divisor)
 
         m.submodules.cdc_o = cdc_o = AsyncQueue(
             shape=qspi.o_octets.payload.shape(), depth=4, w_domain="sync", r_domain="qspi")
