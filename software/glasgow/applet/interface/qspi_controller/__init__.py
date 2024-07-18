@@ -2,12 +2,12 @@ import contextlib
 import logging
 import struct
 from amaranth import *
-from amaranth.lib import enum, data, wiring, stream, io
+from amaranth.lib import enum, data, wiring, stream, io, cdc
 from amaranth.lib.wiring import In, Out, connect, flipped
 
 from ....support.logging import *
-from ....gateware.iostream import IOStream
 from ....gateware.qspi import QSPIMode, QSPIController
+from ....gateware.stream import Queue, AsyncQueue
 from ... import *
 
 
@@ -29,11 +29,26 @@ class QSPIControllerSubtarget(Elaboratable):
     def elaborate(self, platform):
         m = Module()
 
-        m.submodules.qspi = qspi = QSPIController(self._ports, use_ddr_buffers=True)
+        m.domains.qspi = cd_qspi = ClockDomain(async_reset=False)
+        m.d.comb += cd_qspi.clk.eq(ClockSignal())
+
+        m.submodules += cdc.ResetSynchronizer(ResetSignal(), domain="qspi")
+
+        m.submodules.qspi = qspi = DomainRenamer("qspi")(
+            QSPIController(self._ports, use_ddr_buffers=False))
         m.d.comb += qspi.divisor.eq(self._divisor)
 
-        o_fifo  = self._out_fifo.stream
+        m.submodules.cdc_o = cdc_o = AsyncQueue(
+            shape=qspi.o_octets.payload.shape(), depth=4, w_domain="sync", r_domain="qspi")
+        m.submodules.cdc_i = cdc_i = AsyncQueue(
+            shape=qspi.i_octets.payload.shape(), depth=4, w_domain="qspi", r_domain="sync")
+        wiring.connect(m, cdc_o.r, qspi.o_octets)
+        wiring.connect(m, qspi.i_octets, cdc_i.w)
+        qspi_o_octets = cdc_o.w
+        qspi_i_octets = cdc_i.r
+
         i_fifo  = self._in_fifo.stream
+        o_fifo  = self._out_fifo.stream
 
         command = Signal(_QSPICommand)
         chip    = Signal(range(1 + len(self._ports.cs)))
@@ -76,55 +91,55 @@ class QSPIControllerSubtarget(Elaboratable):
                             m.next = "Delay"
 
             with m.State("Transfer"):
-                m.d.comb += qspi.o_octets.p.chip.eq(chip)
-                m.d.comb += qspi.o_octets.p.mode.eq(mode)
+                m.d.comb += qspi_o_octets.p.chip.eq(chip)
+                m.d.comb += qspi_o_octets.p.mode.eq(mode)
                 with m.Switch(mode):
                     with m.Case(QSPIMode.Swap):
                         m.d.comb += [
-                            qspi.o_octets.p.data.eq(o_fifo.payload),
-                            qspi.o_octets.valid.eq(o_fifo.valid & (o_count != 0)),
-                            o_fifo.ready.eq(qspi.o_octets.ready & (o_count != 0)),
-                            i_fifo.payload.eq(qspi.i_octets.p.data),
-                            i_fifo.valid.eq(qspi.i_octets.valid),
-                            qspi.i_octets.ready.eq(i_fifo.ready),
+                            qspi_o_octets.p.data.eq(o_fifo.payload),
+                            qspi_o_octets.valid.eq(o_fifo.valid & (o_count != 0)),
+                            o_fifo.ready.eq(qspi_o_octets.ready & (o_count != 0)),
+                            i_fifo.payload.eq(qspi_i_octets.p.data),
+                            i_fifo.valid.eq(qspi_i_octets.valid),
+                            qspi_i_octets.ready.eq(i_fifo.ready),
                         ]
-                        with m.If(qspi.o_octets.valid & qspi.o_octets.ready):
+                        with m.If(qspi_o_octets.valid & qspi_o_octets.ready):
                             m.d.sync += o_count.eq(o_count - 1)
-                        with m.If(qspi.i_octets.valid & qspi.i_octets.ready):
+                        with m.If(qspi_i_octets.valid & qspi_i_octets.ready):
                             m.d.sync += i_count.eq(i_count - 1)
                         with m.If(i_count == 0):
                             m.next = "Read-Command"
 
                     with m.Case(QSPIMode.PutX1, QSPIMode.PutX2, QSPIMode.PutX4):
                         m.d.comb += [
-                            qspi.o_octets.p.data.eq(o_fifo.payload),
-                            qspi.o_octets.valid.eq(o_fifo.valid & (o_count != 0)),
-                            o_fifo.ready.eq(qspi.o_octets.ready & (o_count != 0)),
+                            qspi_o_octets.p.data.eq(o_fifo.payload),
+                            qspi_o_octets.valid.eq(o_fifo.valid & (o_count != 0)),
+                            o_fifo.ready.eq(qspi_o_octets.ready & (o_count != 0)),
                         ]
-                        with m.If(qspi.o_octets.valid & qspi.o_octets.ready):
+                        with m.If(qspi_o_octets.valid & qspi_o_octets.ready):
                             m.d.sync += o_count.eq(o_count - 1)
                         with m.If(o_count == 0):
                             m.next = "Read-Command"
 
                     with m.Case(QSPIMode.GetX1, QSPIMode.GetX2, QSPIMode.GetX4):
                         m.d.comb += [
-                            qspi.o_octets.valid.eq(o_count != 0),
-                            i_fifo.payload.eq(qspi.i_octets.p.data),
-                            i_fifo.valid.eq(qspi.i_octets.valid),
-                            qspi.i_octets.ready.eq(i_fifo.ready),
+                            qspi_o_octets.valid.eq(o_count != 0),
+                            i_fifo.payload.eq(qspi_i_octets.p.data),
+                            i_fifo.valid.eq(qspi_i_octets.valid),
+                            qspi_i_octets.ready.eq(i_fifo.ready),
                         ]
-                        with m.If(qspi.o_octets.valid & qspi.o_octets.ready):
+                        with m.If(qspi_o_octets.valid & qspi_o_octets.ready):
                             m.d.sync += o_count.eq(o_count - 1)
-                        with m.If(qspi.i_octets.valid & qspi.i_octets.ready):
+                        with m.If(qspi_i_octets.valid & qspi_i_octets.ready):
                             m.d.sync += i_count.eq(i_count - 1)
                         with m.If(i_count == 0):
                             m.next = "Read-Command"
 
                     with m.Case(QSPIMode.Dummy):
                         m.d.comb += [
-                            qspi.o_octets.valid.eq(o_count != 0)
+                            qspi_o_octets.valid.eq(o_count != 0)
                         ]
-                        with m.If(qspi.o_octets.valid & qspi.o_octets.ready):
+                        with m.If(qspi_o_octets.valid & qspi_o_octets.ready):
                             m.d.sync += o_count.eq(o_count - 1)
                         with m.If(o_count == 0):
                             m.next = "Read-Command"

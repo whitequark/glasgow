@@ -2,7 +2,7 @@ from functools import reduce
 from collections import OrderedDict
 from amaranth import *
 from amaranth.lib.fifo import FIFOInterface, SyncFIFOBuffered
-from amaranth.lib.coding import PriorityEncoder, PriorityDecoder
+# from amaranth.lib.coding import PriorityEncoder, PriorityDecoder
 
 
 __all__ = ["EventSource", "EventAnalyzer", "TraceDecodingError", "TraceDecoder"]
