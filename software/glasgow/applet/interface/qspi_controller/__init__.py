@@ -6,7 +6,7 @@ from amaranth.lib import enum, data, wiring, stream, io
 from amaranth.lib.wiring import In, Out, connect, flipped
 
 from ....support.logging import *
-from ....gateware.iostream import IOStream
+from ....gateware.iostream import IOStreamer
 from ....gateware.qspi import QSPIMode, QSPIController
 from ... import *
 

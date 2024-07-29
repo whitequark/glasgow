@@ -3,7 +3,7 @@ from amaranth.lib import enum, data, wiring, stream, io
 from amaranth.lib.wiring import In, Out, connect, flipped
 
 from .ports import PortGroup
-from .iostream import IOStream
+from .iostream import IOStreamer, IOClocker
 
 
 __all__ = ["QSPIMode", "QSPIEnframer", "QSPIDeframer", "QSPIController"]
@@ -30,7 +30,7 @@ class QSPIEnframer(wiring.Component):
                 "mode": QSPIMode,
                 "data": 8,
             }))),
-            "frames": Out(IOStream.o_stream_signature({
+            "frames": Out(IOStreamer.o_stream_signature({
                 "io0": 1,
                 "io1": 1,
                 "io2": 1,
@@ -93,11 +93,13 @@ class QSPIEnframer(wiring.Component):
 class QSPIDeframer(wiring.Component): # meow :3
     def __init__(self):
         super().__init__({
-            "frames": In(IOStream.i_stream_signature({
+            "frames": In(IOStreamer.i_stream_signature({
+                "sck": 1, # FIXME: should not be needed
                 "io0": 1,
                 "io1": 1,
                 "io2": 1,
                 "io3": 1,
+                "cs": 1, # FIXME: should not be needed
             }, meta_layout=QSPIMode)),
             "octets": Out(stream.Signature(data.StructLayout({
                 "data": 8,
@@ -138,46 +140,23 @@ class QSPIDeframer(wiring.Component): # meow :3
         return m
 
 
-# FIXME: needs new name and location
-class Downscaler(wiring.Component):
-    def __init__(self, payload_shape, *, divisor_width=16):
-        super().__init__({
-            "divisor": In(divisor_width),
-
-            # FIXME: i_stream/o_stream or fast/slow? [io]_stream has opposite meaning of IOStream
-            "fast": In(stream.Signature(payload_shape)),
-            "slow": Out(stream.Signature(payload_shape)),
-        })
-
-    def elaborate(self, platform):
-        m = Module()
-
-        timer = Signal.like(self.divisor)
-        with m.If((timer == 0) | (timer == 1)):
-            m.d.comb += self.slow.valid.eq(self.fast.valid)
-            m.d.comb += self.fast.ready.eq(self.slow.ready)
-            with m.If(self.fast.valid & self.slow.ready):
-                m.d.sync += timer.eq(self.divisor)
-        with m.Else():
-            m.d.sync += timer.eq(timer - 1)
-
-        m.d.comb += self.slow.payload.eq(self.fast.payload)
-
-        return m
-
-
 class QSPIController(wiring.Component):
     def __init__(self, ports, *, chip_count=1, use_ddr_buffers=False):
         assert len(ports.sck) == 1 and ports.sck.direction in (io.Direction.Output, io.Direction.Bidir)
         assert len(ports.io) == 4 and ports.io.direction == io.Direction.Bidir
         assert len(ports.cs) >= 1 and ports.cs.direction in (io.Direction.Output, io.Direction.Bidir)
 
-        self._ports = ports
+        self._ports = PortGroup(
+            sck=ports.sck,
+            io0=ports.io[0],
+            io1=ports.io[1],
+            io2=ports.io[2],
+            io3=ports.io[3],
+            cs=~ports.cs,
+        )
         self._ddr = use_ddr_buffers
 
         super().__init__({
-            "divisor": In(16),
-
             "o_octets": In(stream.Signature(data.StructLayout({
                 "chip": range(1 + chip_count),
                 "mode": QSPIMode,
@@ -186,6 +165,8 @@ class QSPIController(wiring.Component):
             "i_octets": Out(stream.Signature(data.StructLayout({
                 "data": 8
             }))),
+
+            "divisor": In(16),
         })
 
     def elaborate(self, platform):
@@ -193,74 +174,36 @@ class QSPIController(wiring.Component):
 
         m = Module()
 
-        m.submodules.iostream = iostream = IOStream({
+        m.submodules.enframer = enframer = QSPIEnframer()
+        connect(m, controller=flipped(self.o_octets), enframer=enframer.octets)
+
+        # FIXME: make clock toggle only when CS# is active
+        m.submodules.io_clocker = io_clocker = IOClocker("sck", {
+            "io0": 1,
+            "io1": 1,
+            "io2": 1,
+            "io3": 1,
+            "cs": len(self._ports.cs),
+        }, o_ratio=ratio, meta_layout=QSPIMode)
+        connect(m, enframer=enframer.frames, io_clocker=io_clocker.i_stream)
+        m.d.comb += io_clocker.divisor.eq(self.divisor)
+
+        m.submodules.io_streamer = io_streamer = IOStreamer({
             "sck": 1,
             "io0": 1,
             "io1": 1,
             "io2": 1,
             "io3": 1,
             "cs": len(self._ports.cs),
-        }, PortGroup(
-            sck=self._ports.sck,
-            io0=self._ports.io[0],
-            io1=self._ports.io[1],
-            io2=self._ports.io[2],
-            io3=self._ports.io[3],
-            cs=~self._ports.cs,
-        ), init={
+        }, self._ports, init={
             "sck": {"o": 1, "oe": 1}, # Motorola "Mode 3" with clock idling high
             "cs":  {"o": 0, "oe": 1}, # deselected
         }, ratio=ratio, meta_layout=QSPIMode)
-
-        m.submodules.downscaler = downscaler = Downscaler(iostream.o_stream.payload.shape(),
-            divisor_width=len(self.divisor))
-        connect(m, downscaler=downscaler.slow, iostream=iostream.o_stream)
-        m.d.comb += downscaler.divisor.eq(self.divisor)
-
-        m.submodules.enframer = enframer = QSPIEnframer()
-        connect(m, controller=flipped(self.o_octets), enframer=enframer.octets)
+        connect(m, io_clocker=io_clocker.o_stream, io_streamer=io_streamer.o_stream)
 
         m.submodules.deframer = deframer = QSPIDeframer()
-        connect(m, controller=flipped(self.i_octets), deframer=deframer.octets)
+        connect(m, io_streamer=io_streamer.i_stream, deframer=deframer.frames)
 
-        phase = Signal()
-        with m.If(self._ddr & (self.divisor == 0)): # special case: transfer each cycle
-            m.d.sync += phase.eq(1)
-        with m.Elif(iostream.o_stream.valid): # half-transfer or less each cycle
-            m.d.sync += phase.eq(~phase)
-        with m.If(enframer.frames.p.port.cs.o.any()):
-            if self._ddr:
-                m.d.comb += downscaler.fast.p.port.sck.o.eq(Cat(~phase, phase))
-            else:
-                m.d.comb += downscaler.fast.p.port.sck.o.eq(phase)
-        with m.Else():
-            m.d.comb += downscaler.fast.p.port.sck.o.eq(C(1).replicate(ratio))
-        m.d.comb += [
-            downscaler.fast.p.port.sck.oe.eq(enframer.frames.p.port.cs.o.any()),
-            downscaler.fast.p.port.io0.o.eq(enframer.frames.p.port.io0.o.replicate(ratio)),
-            downscaler.fast.p.port.io1.o.eq(enframer.frames.p.port.io1.o.replicate(ratio)),
-            downscaler.fast.p.port.io2.o.eq(enframer.frames.p.port.io2.o.replicate(ratio)),
-            downscaler.fast.p.port.io3.o.eq(enframer.frames.p.port.io3.o.replicate(ratio)),
-            downscaler.fast.p.port.cs.o.eq(enframer.frames.p.port.cs.o.replicate(ratio)),
-            downscaler.fast.p.port.io0.oe.eq(enframer.frames.p.port.io0.oe),
-            downscaler.fast.p.port.io1.oe.eq(enframer.frames.p.port.io1.oe),
-            downscaler.fast.p.port.io2.oe.eq(enframer.frames.p.port.io2.oe),
-            downscaler.fast.p.port.io3.oe.eq(enframer.frames.p.port.io3.oe),
-            downscaler.fast.p.port.cs.oe.eq(enframer.frames.p.port.cs.oe),
-            downscaler.fast.p.i_en.eq(enframer.frames.p.i_en & phase),
-            downscaler.fast.p.meta.eq(enframer.frames.p.meta),
-            downscaler.fast.valid.eq(enframer.frames.valid),
-            enframer.frames.ready.eq(downscaler.fast.ready & phase),
-        ]
-
-        m.d.comb += [
-            deframer.frames.p.port.io0.i.eq(iostream.i_stream.p.port.io0.i[0]),
-            deframer.frames.p.port.io1.i.eq(iostream.i_stream.p.port.io1.i[0]),
-            deframer.frames.p.port.io2.i.eq(iostream.i_stream.p.port.io2.i[0]),
-            deframer.frames.p.port.io3.i.eq(iostream.i_stream.p.port.io3.i[0]),
-            deframer.frames.p.meta.eq(iostream.i_stream.p.meta),
-            deframer.frames.valid.eq(iostream.i_stream.valid),
-            iostream.i_stream.ready.eq(deframer.frames.ready),
-        ]
+        connect(m, deframer=deframer.octets, controller=flipped(self.i_octets))
 
         return m

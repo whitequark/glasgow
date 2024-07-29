@@ -9,7 +9,7 @@ from glasgow.gateware.iostream import *
 class IOStreamTestCase(unittest.TestCase):
     def test_basic(self):
         port = io.SimulationPort("io", 1)
-        dut = IOStream(1, port, meta_layout=4)
+        dut = IOStreamer(1, port, meta_layout=4)
 
         async def testbench(ctx):
             await ctx.tick()
@@ -58,7 +58,7 @@ class IOStreamTestCase(unittest.TestCase):
 
     def test_skid(self):
         port = io.SimulationPort("io", 4)
-        dut = IOStream(4, port, meta_layout=4)
+        dut = IOStreamer(4, port, meta_layout=4)
 
         async def testbench(ctx):
             await ctx.tick()

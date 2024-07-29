@@ -5,7 +5,7 @@ from amaranth.lib.wiring import In, Out
 from glasgow.gateware.ports import PortGroup
 
 
-__all__ = ["IOStream"]
+__all__ = ["IOStreamer"]
 
 
 def _iter_ioshape(ioshape, *args):
@@ -25,7 +25,7 @@ def _map_ioshape(ioshape, fn):
     assert False
 
 
-class IOStream(wiring.Component):
+class IOStreamer(wiring.Component):
     """I/O buffer to stream adapter.
 
     This adapter instantiates I/O buffers for a port (FF or DDR) and connects them to a pair of
@@ -149,5 +149,60 @@ class IOStream(wiring.Component):
         m.d.comb += self.i_stream.payload.eq(skid[skid_at])
         m.d.comb += self.i_stream.valid.eq(i_en | (skid_at != 0))
         m.d.comb += self.o_stream.ready.eq(self.i_stream.ready & (skid_at == 0))
+
+        return m
+
+
+class IOClocker(wiring.Component):
+    def __init__(self, clock, ioshape, *, o_ratio=1, meta_layout=0, divisor_width=16):
+        assert isinstance(ioshape, dict)
+        assert isinstance(clock, str)
+        assert o_ratio in (1, 2)
+
+        self._clock     = clock
+        self._i_ioshape = ioshape
+        self._o_ioshape = {clock: 1, **ioshape}
+        self._o_ratio   = o_ratio
+
+        super().__init__({
+            "i_stream":  In(IOStreamer.o_stream_signature(self._i_ioshape, ratio=1,
+                meta_layout=meta_layout)),
+            "o_stream": Out(IOStreamer.o_stream_signature(self._o_ioshape, ratio=o_ratio,
+                meta_layout=meta_layout)),
+
+            "divisor": In(divisor_width),
+        })
+
+    def elaborate(self, platform):
+        m = Module()
+
+        for i_parts, o_parts in _iter_ioshape(self._i_ioshape, self.i_stream.p.port, self.o_stream.p.port):
+            m.d.comb += o_parts.o .eq(i_parts.o.replicate(self._o_ratio))
+            m.d.comb += o_parts.oe.eq(i_parts.oe)
+        m.d.comb += self.o_stream.p.meta.eq(self.i_stream.p.meta)
+
+        clock = Signal()
+        if self._o_ratio == 1:
+            m.d.comb += self.o_stream.p.port[self._clock].o.eq(clock)
+        if self._o_ratio == 2:
+            m.d.comb += self.o_stream.p.port[self._clock].o.eq(Cat(~clock, clock))
+        m.d.comb += self.o_stream.p.port[self._clock].oe.eq(1)
+        m.d.comb += self.o_stream.p.i_en.eq(self.i_stream.p.i_en & clock)
+
+        timer = Signal.like(self.divisor)
+        phase = Signal()
+        with m.If((timer == 0) | (timer == 1)):
+            m.d.comb += self.o_stream.valid.eq(self.i_stream.valid)
+            m.d.comb += self.i_stream.ready.eq(self.o_stream.ready & clock)
+            with m.If(self.i_stream.valid & self.o_stream.ready):
+                with m.If((self._o_ratio == 2) & (self.divisor == 0)):
+                    m.d.sync += phase.eq(0)
+                    m.d.comb += clock.eq(1)
+                with m.Else():
+                    m.d.sync += phase.eq(~phase)
+                    m.d.comb += clock.eq(phase)
+                m.d.sync += timer.eq(self.divisor)
+        with m.Else():
+            m.d.sync += timer.eq(timer - 1)
 
         return m
