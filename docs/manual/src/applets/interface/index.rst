@@ -18,4 +18,5 @@ I/O interfaces
     jtag_xvc
     swd_probe
     ethernet_rgmii
+    ethernet_rmii
     probe_rs
