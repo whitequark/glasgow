@@ -76,7 +76,7 @@ class AbstractEthernetInterface:
         self._rx_bypass = assembly.add_rw_register(component.rx_bypass)
         self._tx_bypass = assembly.add_rw_register(component.tx_bypass)
 
-        self.mdio_iface = mdio_iface
+        self._mdio_iface = mdio_iface
 
         self._snoop: snoop.SnoopWriter = None
 
@@ -84,6 +84,10 @@ class AbstractEthernetInterface:
         if level is None:
             level = self._level
         self._logger.log(level, "Ethernet: " + message, *args)
+
+    @property
+    def mdio_iface(self):
+        return self._mdio_iface
 
     async def configure(self, *, duplex: Optional[ethernet.Duplex]):
         if duplex is not None:
