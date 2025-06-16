@@ -100,7 +100,7 @@ class Enframer(wiring.Component):
                 with m.If(self.carrier):
                     m.d.sync += count.eq(0)
                     m.next = "Jam"
-                with m.If(self.o.ready):
+                with m.Elif(self.o.ready):
                     m.d.comb += self.i.ready.eq(1)
                     with m.If(~self.i.valid):
                         # This should never happen in a correctly designed and functioning MAC, but
@@ -124,6 +124,8 @@ class Enframer(wiring.Component):
                         m.next = "Medium Busy"
 
             with m.State("Medium Busy"):
+                m.d.comb += self.o.valid.eq(1)
+                m.d.comb += self.o.p.end.eq(1)
                 with m.If(~self.carrier):
                     m.next = "Interpacket Gap"
 
@@ -134,7 +136,14 @@ class Enframer(wiring.Component):
                     m.d.sync += count.eq(count + 1)
                     with m.If(count == 11):
                         m.d.sync += count.eq(0)
-                        m.next = "Idle"
+                        # IEEE 802.3-2008 §4.2.3.2.1(a):
+                        #   If, at the end of the interPacketGap, a packet is waiting to be
+                        #   transmitted, transmission is initiated independent of the value of
+                        #   carrierSense.
+                        with m.If(self.i.valid):
+                            m.next = "Preamble"
+                        with m.Else():
+                            m.next = "Idle"
 
         return m
 
