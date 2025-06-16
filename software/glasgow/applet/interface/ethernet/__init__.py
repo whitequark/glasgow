@@ -1,7 +1,7 @@
 # Ref: IEEE Std 802.3-2018
 # Accession: G00098
 
-from typing import Iterable, AsyncIterator, BinaryIO
+from typing import Optional, Iterable, AsyncIterator, BinaryIO
 import time
 import logging
 import asyncio
@@ -62,8 +62,9 @@ class EthernetComponent(wiring.Component):
 
 
 class AbstractEthernetInterface:
-    def __init__(self, logger: logging.Logger, assembly: AbstractAssembly, *,
-                 driver: ethernet.AbstractDriver):
+    def __init__(self, logger: logging.Logger, assembly: AbstractAssembly,
+                 driver: ethernet.AbstractDriver, *,
+                 mdio_iface: ControlMDIOInterface):
         self._logger = logger
         self._level  = logging.DEBUG if self._logger.name.startswith(__name__) else logging.TRACE
 
@@ -71,14 +72,37 @@ class AbstractEthernetInterface:
         self._pipe = assembly.add_inout_pipe(
             component.o_stream, component.i_stream, in_flush=component.o_flush,
             in_fifo_depth=0, out_buffer_size=512 * 128)
-        self.duplex = assembly.add_rw_register(component.duplex)
-        self.rx_bypass = assembly.add_rw_register(component.rx_bypass)
-        self.tx_bypass = assembly.add_rw_register(component.tx_bypass)
+        self._duplex = assembly.add_rw_register(component.duplex)
+        self._rx_bypass = assembly.add_rw_register(component.rx_bypass)
+        self._tx_bypass = assembly.add_rw_register(component.tx_bypass)
+
+        self.mdio_iface = mdio_iface
 
         self._snoop: snoop.SnoopWriter = None
 
-    def _log(self, message: str, *args):
-        self._logger.log(self._level, "Ethernet: " + message, *args)
+    def _log(self, message: str, *args, level=None):
+        if level is None:
+            level = self._level
+        self._logger.log(level, "Ethernet: " + message, *args)
+
+    async def configure(self, *, duplex: Optional[ethernet.Duplex]):
+        if duplex is not None:
+            self._log(f"configure duplex={duplex.name}")
+            wr_control = REG_BASIC_CONTROL.from_int(
+                await self.mdio_iface.c22_read(0, REG_BASIC_CONTROL_addr))
+            match duplex:
+                case ethernet.Duplex.Half: wr_control.DUPLEXMD = 0
+                case ethernet.Duplex.Full: wr_control.DUPLEXMD = 1
+            await self.mdio_iface.c22_write(0, REG_BASIC_CONTROL_addr, wr_control.to_int())
+
+        rd_control = REG_BASIC_CONTROL.from_int(
+            await self.mdio_iface.c22_read(0, REG_BASIC_CONTROL_addr))
+        match rd_control.DUPLEXMD:
+            case 0: rd_duplex = ethernet.Duplex.Half
+            case 1: rd_duplex = ethernet.Duplex.Full
+        if duplex is not None and rd_duplex != duplex:
+            self._log(f"cannot configure PHY in {duplex.name} Duplex mode", level=logging.WARNING)
+        await self._duplex.set(rd_duplex)
 
     @property
     def snoop_file(self) -> BinaryIO:
@@ -121,6 +145,8 @@ class AbstractEthernetInterface:
 
 
 class AbstractEthernetApplet(GlasgowAppletV2):
+    eth_iface: AbstractEthernetInterface
+
     logger = logging.getLogger(__name__)
     help = "send and receive Ethernet packets"
     description = """
@@ -138,7 +164,7 @@ class AbstractEthernetApplet(GlasgowAppletV2):
     @classmethod
     def add_setup_arguments(cls, parser):
         parser.add_argument(
-            "--duplex", metavar="DUPLEX", choices=("half", "full"), default="full",
+            "--duplex", metavar="DUPLEX", choices=("half", "full"),
             help="whether transmission and reception use same medium (half) or different (full)")
 
         parser.add_argument(
@@ -147,8 +173,10 @@ class AbstractEthernetApplet(GlasgowAppletV2):
 
     async def setup(self, args):
         match args.duplex:
-            case "half": await self.eth_iface.duplex.set(ethernet.Duplex.Half)
-            case "full": await self.eth_iface.duplex.set(ethernet.Duplex.Full)
+            case None:   duplex = None
+            case "half": duplex = ethernet.Duplex.Half
+            case "full": duplex = ethernet.Duplex.Full
+        await self.eth_iface.configure(duplex=duplex)
 
         self.eth_iface.snoop_file = args.snoop_file
 
@@ -189,10 +217,10 @@ class AbstractEthernetApplet(GlasgowAppletV2):
 
         if args.operation == "loopback":
             # Enable near-end loopback.
-            basic_control = REG_BASIC_CONTROL.from_int(
+            control = REG_BASIC_CONTROL.from_int(
                 await self.mdio_iface.c22_read(0, REG_BASIC_CONTROL_addr))
-            basic_control.LOOPBACK = 1
-            await self.mdio_iface.c22_write(0, REG_BASIC_CONTROL_addr, basic_control.to_int())
+            control.LOOPBACK = 1
+            await self.mdio_iface.c22_write(0, REG_BASIC_CONTROL_addr, control.to_int())
 
             # Accept all packets, even those with CRC errors.
             await self.eth_iface.rx_bypass.set(True)

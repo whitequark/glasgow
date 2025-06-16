@@ -135,12 +135,13 @@ class EthernetRMIIDriver(AbstractDriver):
 
 class EthernetRMIIInterface(AbstractEthernetInterface):
     def __init__(self, logger: logging.Logger, assembly: AbstractAssembly, *,
+                 mdio_iface: ControlMDIOInterface,
                  crs_dv: GlasgowPin, rx_data: GlasgowPin,
                  tx_en: GlasgowPin, tx_data: GlasgowPin,
                  ref_clk: GlasgowPin):
         ports = assembly.add_port_group(
             crs_dv=crs_dv, rx_data=rx_data, tx_en=tx_en, tx_data=tx_data, ref_clk=ref_clk)
-        super().__init__(logger, assembly, driver=EthernetRMIIDriver(ports))
+        super().__init__(logger, assembly, EthernetRMIIDriver(ports), mdio_iface=mdio_iface)
 
 
 class EthernetRMIIApplet(AbstractEthernetApplet):
@@ -169,16 +170,17 @@ class EthernetRMIIApplet(AbstractEthernetApplet):
     def build(self, args):
         with self.assembly.add_applet(self):
             self.assembly.use_voltage(args.voltage)
+            self.mdio_iface = ControlMDIOInterface(self.logger, self.assembly,
+                mdc=args.mdc, mdio=args.mdio)
             self.eth_iface = EthernetRMIIInterface(self.logger, self.assembly,
+                mdio_iface=self.mdio_iface,
                 crs_dv =args.crs_dv, rx_data=args.rx_data,
                 tx_en  =args.tx_en,  tx_data=args.tx_data,
                 ref_clk=args.ref_clk)
-            self.mdio_iface = ControlMDIOInterface(self.logger, self.assembly,
-                mdc=args.mdc, mdio=args.mdio)
 
     async def setup(self, args):
-        await super().setup(args)
         await self.mdio_iface.clock.set_frequency(1e6)
+        await super().setup(args)
 
     @classmethod
     def tests(cls):

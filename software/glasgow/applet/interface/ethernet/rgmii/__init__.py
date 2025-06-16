@@ -97,13 +97,15 @@ class EthernetRGMIIDriver(AbstractDriver):
 
 class EthernetRGMIIInterface(AbstractEthernetInterface):
     def __init__(self, logger: logging.Logger, assembly: AbstractAssembly, *,
+                 mdio_iface: ControlMDIOInterface,
                  rx_clk: GlasgowPin, rx_ctl: GlasgowPin, rx_data: GlasgowPin, rx_delay: int,
                  tx_clk: GlasgowPin, tx_ctl: GlasgowPin, tx_data: GlasgowPin, tx_delay: int):
         ports = assembly.add_port_group(
             rx_clk=rx_clk, rx_ctl=rx_ctl, rx_data=rx_data,
             tx_clk=tx_clk, tx_ctl=tx_ctl, tx_data=tx_data)
         super().__init__(logger, assembly,
-            driver=EthernetRGMIIDriver(ports, rx_delay=rx_delay, tx_delay=tx_delay))
+            EthernetRGMIIDriver(ports, rx_delay=rx_delay, tx_delay=tx_delay),
+            mdio_iface=mdio_iface)
 
 
 class EthernetRGMIIApplet(AbstractEthernetApplet):
@@ -147,20 +149,20 @@ class EthernetRGMIIApplet(AbstractEthernetApplet):
     def build(self, args):
         with self.assembly.add_applet(self):
             self.assembly.use_voltage(args.voltage)
+            self.mdio_iface = ControlMDIOInterface(self.logger, self.assembly,
+                mdc=args.mdc, mdio=args.mdio)
             self.eth_iface = EthernetRGMIIInterface(self.logger, self.assembly,
+                mdio_iface=self.mdio_iface,
                 rx_clk=args.rx_clk, rx_ctl=args.rx_ctl, rx_data=args.rx_data,
                 tx_clk=args.tx_clk, tx_ctl=args.tx_ctl, tx_data=args.tx_data,
                 rx_delay=args.rx_delay, tx_delay=args.tx_delay)
-            self.mdio_iface = ControlMDIOInterface(self.logger, self.assembly,
-                mdc=args.mdc, mdio=args.mdio)
 
     async def setup(self, args):
-        await super().setup(args)
         await self.mdio_iface.clock.set_frequency(1e6)
-
         # Configure for 100 Mbps full duplex, no autonegotiation
         await self.mdio_iface.c22_write(0, REG_BASIC_CONTROL_addr,
             REG_BASIC_CONTROL(DUPLEXMD=1, SPD_SEL_0=1).to_int())
+        await super().setup(args)
 
     @classmethod
     def tests(cls):
