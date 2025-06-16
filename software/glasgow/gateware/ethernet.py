@@ -69,41 +69,65 @@ class Enframer(wiring.Component):
             with m.State("Idle"):
                 with m.If(self.carrier):
                     m.next = "Medium Busy"
-                with m.If(self.i.valid):
+                with m.Elif(self.i.valid):
                     m.next = "Preamble"
 
-            with m.State("Medium Busy"):
-                with m.If(~self.carrier):
-                    m.next = "Interpacket Gap"
-
             with m.State("Preamble"):
-                with m.If(self.i.valid):
-                    m.d.comb += self.o.valid.eq(1)
-                    m.d.comb += self.o.p.data.eq(0x55)
-                    with m.If(self.o.ready):
-                        m.d.sync += count.eq(count + 1)
-                        with m.If(count == 6):
-                            m.d.sync += count.eq(0)
-                            m.next = "Start Delimiter"
+                m.d.comb += self.o.valid.eq(1)
+                m.d.comb += self.o.p.data.eq(0x55)
+                with m.If(self.carrier):
+                    m.d.sync += count.eq(0)
+                    m.next = "Jam"
+                with m.Elif(self.o.ready):
+                    m.d.sync += count.eq(count + 1)
+                    with m.If(count == 6):
+                        m.d.sync += count.eq(0)
+                        m.next = "Frame Start"
 
-            with m.State("Start Delimiter"):
+            with m.State("Frame Start"):
                 m.d.comb += self.o.valid.eq(1)
                 m.d.comb += self.o.p.data.eq(0xd5)
-                with m.If(self.o.ready):
+                with m.If(self.carrier):
+                    m.d.sync += count.eq(0)
+                    m.next = "Jam"
+                with m.Elif(self.o.ready):
                     m.d.sync += count.eq(0)
                     m.next = "Frame Data"
 
             with m.State("Frame Data"):
                 m.d.comb += self.o.valid.eq(1)
                 m.d.comb += self.o.p.data.eq(self.i.p.data)
+                with m.If(self.carrier):
+                    m.d.sync += count.eq(0)
+                    m.next = "Jam"
                 with m.If(self.o.ready):
                     m.d.comb += self.i.ready.eq(1)
                     with m.If(~self.i.valid):
-                        m.next = "Underflow"
+                        # This should never happen in a correctly designed and functioning MAC, but
+                        # if it does, make sure the packet is transmitted with an error.
+                        m.next = "Jam"
                     with m.Elif(self.i.p.last):
                         m.next = "Interpacket Gap"
 
-            with m.State(f"Interpacket Gap"):
+            with m.State("Jam"):
+                # IEEE 802.3-2008 §4.2.3.2.4:
+                #   The content of the jam is unspecified; it may be any fixed or variable pattern
+                #   convenient to the Media Access implementation; however, the implementation
+                #   shall not be intentionally designed to be the 32-bit CRC value corresponding
+                #   to the (partial) packet transmitted prior to the jam.
+                m.d.comb += self.o.valid.eq(1)
+                m.d.comb += self.o.p.data.eq(0xA5)
+                with m.If(self.o.ready):
+                    m.d.sync += count.eq(count + 1)
+                    with m.If(count == 3):
+                        m.d.sync += count.eq(0)
+                        m.next = "Medium Busy"
+
+            with m.State("Medium Busy"):
+                with m.If(~self.carrier):
+                    m.next = "Interpacket Gap"
+
+            with m.State("Interpacket Gap"):
                 m.d.comb += self.o.valid.eq(1)
                 m.d.comb += self.o.p.end.eq(1)
                 with m.If(self.o.ready):
@@ -111,9 +135,6 @@ class Enframer(wiring.Component):
                     with m.If(count == 11):
                         m.d.sync += count.eq(0)
                         m.next = "Idle"
-
-            with m.State("Underflow"):
-                pass # should never happen
 
         return m
 
