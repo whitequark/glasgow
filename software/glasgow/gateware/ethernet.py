@@ -8,9 +8,15 @@ from glasgow.gateware.crc import ChecksumAppender, ChecksumVerifier
 
 
 __all__ = [
+    "Duplex",
     "AbstractDriver", "LoopbackDriver",
     "Enframer", "Deframer", "Controller",
 ]
+
+
+class Duplex(enum.Enum, shape=1):
+    Full = 0
+    Half = 1
 
 
 class AbstractDriver(wiring.Component):
@@ -26,6 +32,7 @@ class AbstractDriver(wiring.Component):
                 "data": 8,
                 "end":  1,
             }), always_ready=True)),
+            "carrier": Out(1),
             **signature
         })
 
@@ -52,12 +59,23 @@ class Enframer(wiring.Component):
         "data":  8,
         "end":   1,
     })))
+    carrier: In(1)
 
     def elaborate(self, platform):
         m = Module()
 
         count = Signal(4)
         with m.FSM():
+            with m.State("Idle"):
+                with m.If(self.carrier):
+                    m.next = "Medium Busy"
+                with m.If(self.i.valid):
+                    m.next = "Preamble"
+
+            with m.State("Medium Busy"):
+                with m.If(~self.carrier):
+                    m.next = "Interpacket Gap"
+
             with m.State("Preamble"):
                 with m.If(self.i.valid):
                     m.d.comb += self.o.valid.eq(1)
@@ -92,7 +110,7 @@ class Enframer(wiring.Component):
                     m.d.sync += count.eq(count + 1)
                     with m.If(count == 11):
                         m.d.sync += count.eq(0)
-                        m.next = "Preamble"
+                        m.next = "Idle"
 
             with m.State("Underflow"):
                 pass # should never happen
@@ -152,6 +170,8 @@ class Controller(wiring.Component):
         "end":   1,
     })))
 
+    duplex:    In(Duplex)
+
     tx_bypass: In(1)
     rx_bypass: In(1)
 
@@ -195,6 +215,8 @@ class Controller(wiring.Component):
 
         m.submodules.driver = driver = self.driver
         wiring.connect(m, driver.i, enframer.o)
+        with m.If(self.duplex == Duplex.Half):
+            m.d.comb += enframer.carrier.eq(driver.carrier)
 
         m.submodules.deframer = deframer = DomainRenamer("mac")(Deframer())
         wiring.connect(m, deframer.i, driver.o)

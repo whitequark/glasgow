@@ -541,14 +541,14 @@ class HardwareAssembly(AbstractAssembly):
     def add_ro_register(self, signal) -> AbstractRORegister:
         assert self._artifact is None, "cannot add a register to a sealed assembly"
         register = HardwareRORegister(self._logger, self,
-            address=2 + len(self._registers), shape=signal.shape(), name=signal.name)
+            address=2 + len(self._registers), shape=signal.shape(), name=Value.cast(signal).name)
         self._registers.append((register, signal, self._domain))
         return register
 
     def add_rw_register(self, signal) -> AbstractRWRegister:
         assert self._artifact is None, "cannot add a register to a sealed assembly"
         register = HardwareRWRegister(self._logger, self,
-            address=2 + len(self._registers), shape=signal.shape(), name=signal.name)
+            address=2 + len(self._registers), shape=signal.shape(), name=Value.cast(signal).name)
         self._registers.append((register, signal, self._domain))
         return register
 

@@ -30,6 +30,8 @@ class EthernetComponent(wiring.Component):
     o_stream:  Out(stream.Signature(8))
     o_flush:   Out(1)
 
+    duplex:    In(ethernet.Duplex)
+
     rx_bypass: In(1)
     tx_bypass: In(1)
 
@@ -45,6 +47,7 @@ class EthernetComponent(wiring.Component):
         wiring.connect(m, tx_decoder.i, wiring.flipped(self.i_stream))
 
         m.submodules.ctrl = ctrl = ethernet.Controller(self._driver)
+        m.d.comb += ctrl.duplex.eq(self.duplex)
         m.d.comb += ctrl.rx_bypass.eq(self.rx_bypass)
         m.d.comb += ctrl.tx_bypass.eq(self.tx_bypass)
         wiring.connect(m, ctrl.i, tx_decoder.o)
@@ -68,8 +71,9 @@ class AbstractEthernetInterface:
         self._pipe = assembly.add_inout_pipe(
             component.o_stream, component.i_stream, in_flush=component.o_flush,
             in_fifo_depth=0, out_buffer_size=512 * 128)
-        self._rx_bypass = assembly.add_rw_register(component.rx_bypass)
-        self._tx_bypass = assembly.add_rw_register(component.tx_bypass)
+        self.duplex = assembly.add_rw_register(component.duplex)
+        self.rx_bypass = assembly.add_rw_register(component.rx_bypass)
+        self.tx_bypass = assembly.add_rw_register(component.tx_bypass)
 
         self._snoop: snoop.SnoopWriter = None
 
@@ -133,10 +137,19 @@ class AbstractEthernetApplet(GlasgowAppletV2):
 
     @classmethod
     def add_setup_arguments(cls, parser):
-        parser.add_argument("--snoop", dest="snoop_file", type=argparse.FileType("wb"),
-            metavar="SNOOP-FILE", help="save packets to a file in RFC 1761 format")
+        parser.add_argument(
+            "--duplex", metavar="DUPLEX", choices=("half", "full"), default="full",
+            help="whether transmission and reception use same medium (half) or different (full)")
+
+        parser.add_argument(
+            "--snoop", dest="snoop_file", metavar="SNOOP-FILE", type=argparse.FileType("wb"),
+            help="save packets to a file in RFC 1761 format")
 
     async def setup(self, args):
+        match args.duplex:
+            case "half": await self.eth_iface.duplex.set(ethernet.Duplex.Half)
+            case "full": await self.eth_iface.duplex.set(ethernet.Duplex.Full)
+
         self.eth_iface.snoop_file = args.snoop_file
 
     @classmethod
@@ -182,7 +195,7 @@ class AbstractEthernetApplet(GlasgowAppletV2):
             await self.mdio_iface.c22_write(0, REG_BASIC_CONTROL_addr, basic_control.to_int())
 
             # Accept all packets, even those with CRC errors.
-            await self.eth_iface._rx_bypass.set(True)
+            await self.eth_iface.rx_bypass.set(True)
 
             count_ok   = 0
             count_bad  = 0

@@ -128,6 +128,8 @@ class EthernetRMIIDriver(AbstractDriver):
                     with m.If(~rx_buffer.crs_dv[2:4].any()):
                         m.next = "Idle"
 
+        m.d.comb += self.carrier.eq(rx_buffer.crs_dv.any())
+
         return m
 
 
