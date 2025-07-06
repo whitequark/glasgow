@@ -12,6 +12,7 @@ Applet index
     memory/index
     program/index
     debug/index
+    radio/index
     control/index
     bridge/index
     internal/index
