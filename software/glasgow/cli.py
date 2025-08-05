@@ -244,9 +244,9 @@ def get_argparser():
                         applet_cls.tool_cls.add_arguments(p_applet)
 
                     if mode in ("repl", "script"):
-                        # this will absorb all arguments from the '--' onwards (inclusive), make sure it's
-                        # always last... the '--' item that ends up at the front is removed before the list
-                        # is passed to the repo / script environment
+                        # this will absorb all arguments from the '--' onwards (inclusive), make
+                        # sure it's always last... the '--' item that ends up at the front is
+                        # removed before the list is passed to the repo / script environment
                         p_applet.add_argument("script_args", nargs=argparse.REMAINDER)
                 return p_applet_build
             p_applet.add_build_func(p_applet_build_factory(p_applet, handle, applet_cls, mode))
@@ -663,7 +663,8 @@ async def main() -> int:
 
             if target:
                 device = DeprecatedDevice(target)
-                device.demultiplexer = DeprecatedDemultiplexer(device, target.multiplexer.pipe_count)
+                device.demultiplexer = DeprecatedDemultiplexer(
+                    device, target.multiplexer.pipe_count)
 
             async def run_applet():
                 if args.action in ("repl", "script"):
