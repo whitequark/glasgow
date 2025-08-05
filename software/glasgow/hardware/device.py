@@ -181,7 +181,7 @@ class GlasgowDevice:
         return list(devices.keys())
 
     @classmethod
-    async def find(cls, serial: Optional[str] = None) -> 'GlasgowDevice':
+    async def find(cls, serial: Optional[str] = None) -> "GlasgowDevice":
         usb_context = usb.Context()
         usb_devices = await cls._enumerate_devices(usb_context)
         if len(usb_devices) == 0:
@@ -413,7 +413,7 @@ class GlasgowDevice:
 
     async def download_prebuilt(self, plan, bitstream_file):
         bitstream_file_id = bitstream_file.read(16)
-        force_download = (bitstream_file_id == b'\xff' * 16)
+        force_download = (bitstream_file_id == b"\xff" * 16)
         if force_download:
             logger.warning("prebuilt bitstream ID is all ones, forcing download")
         elif await self.bitstream_id() == plan.bitstream_id:
