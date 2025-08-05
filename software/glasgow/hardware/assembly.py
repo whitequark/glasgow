@@ -1,5 +1,4 @@
 from typing import Any, Optional, Generator, BinaryIO
-from collections.abc import Mapping
 from collections import defaultdict
 from contextlib import contextmanager
 import os
@@ -10,7 +9,6 @@ from amaranth import *
 from amaranth.hdl import ShapeCastable
 from amaranth.lib import wiring, io
 from amaranth.build import ResourceError
-import usb1
 
 from ..support import usb
 from ..support.logging import dump_hex
