@@ -340,7 +340,7 @@ class EventAnalyzerTestCase(unittest.TestCase):
 
     @simulation_test(sources=(1,))
     def test_throttle_hyst(self, tb):
-        for x in range(16):
+        for _ in range(16):
             yield from tb.trigger(0, 1)
             yield from tb.step()
             self.assertEqual((yield tb.dut.throttle), 0)
@@ -348,7 +348,7 @@ class EventAnalyzerTestCase(unittest.TestCase):
         yield from tb.step()
         self.assertEqual((yield tb.dut.throttle), 1)
         yield tb.fifo.r_en.eq(1)
-        for x in range(52):
+        for _ in range(52):
             yield
         yield tb.fifo.r_en.eq(0)
         yield
@@ -356,7 +356,7 @@ class EventAnalyzerTestCase(unittest.TestCase):
 
     @simulation_test(sources=(1,))
     def test_overrun(self, tb):
-        for x in range(18):
+        for _ in range(18):
             yield from tb.trigger(0, 1)
             yield from tb.step()
             self.assertEqual((yield tb.dut.overrun), 0)
@@ -364,7 +364,7 @@ class EventAnalyzerTestCase(unittest.TestCase):
         yield from tb.step()
         self.assertEqual((yield tb.dut.overrun), 1)
         yield tb.fifo.r_en.eq(1)
-        for x in range(55):
+        for _ in range(55):
             while not (yield tb.fifo.r_rdy):
                 yield
             yield
