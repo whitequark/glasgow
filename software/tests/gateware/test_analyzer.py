@@ -51,7 +51,7 @@ class EventAnalyzerTestbench(Elaboratable):
             yield
             cycle += 1
         if (yield self.fifo.r_rdy):
-            raise ValueError("junk in FIFO: %#04x at %d" % ((yield self.fifo.r_data), count))
+            raise ValueError(f"junk in FIFO: {yield self.fifo.r_data:#04x} at {count}")
 
         return data
 
