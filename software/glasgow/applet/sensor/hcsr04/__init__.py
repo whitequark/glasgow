@@ -38,28 +38,32 @@ class SensorHCSR04Component(wiring.Component):
         dist_count  = Signal(24)
 
         with m.FSM():
-            with m.State("Waiting"):
+            with m.State("Idle"):
                 m.d.sync += self.done.eq(0)
                 m.d.sync += pulse_count.eq(0)
                 m.d.sync += dist_count.eq(0)
                 with m.If(self.start):
-                    m.next = "Pulse"
+                    m.next = "Pulse-Trig"
 
-            with m.State("Pulse"):
+            with m.State("Pulse-Trig"):
                 m.d.comb += trig.eq(1)
                 m.d.sync += pulse_count.eq(pulse_count + 1)
                 with m.If(pulse_count == 480):
-                    m.next = "Measure"
+                    m.next = "Wait-Echo"
 
-            with m.State("Measure"):
-                m.d.sync += dist_count.eq(dist_count + 1)
+            with m.State("Wait-Echo"):
                 with m.If(echo):
+                    m.next = "Measure-Echo"
+
+            with m.State("Measure-Echo"):
+                m.d.sync += dist_count.eq(dist_count + 1)
+                with m.If(~echo):
                     m.next = "Done"
 
             with m.State("Done"):
                 m.d.sync += self.done.eq(1)
                 with m.If(~self.start):
-                    m.next = "Waiting"
+                    m.next = "Idle"
 
         m.d.comb += self.distance.eq(dist_count)
 
