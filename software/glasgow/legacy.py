@@ -163,7 +163,7 @@ class DeprecatedDemultiplexer:
                 applet.logger.info("port %s voltage set to %.1f V (sensed on port %s)",
                     port, voltage, vio.sense)
             if vio.value is not None:
-                await self.device.set_voltage(port, vio.value)
+                await self.device.set_voltage(str(port), vio.value)
                 applet.logger.info("port %s voltage set to %.1f V",
                     port, vio.value)
 
