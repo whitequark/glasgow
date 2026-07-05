@@ -229,6 +229,32 @@ class _GlasgowRevDPlatform(GlasgowECP5Platform):
             ("S", "port_s", range(1)),
         )
 
+    def _add_debug_resources(self):
+        # These resource types can be used to mirror signals inside the FPGA via the main I/O
+        # connectors, to attach a logic analyzer. They are not meant to be used in applets.
+        self.add_resources([
+            Resource("debug_a", 0,
+                Subsignal("io", Pins("B2 D3 C2 F3 E2 F5 G5 E1", dir="io")),
+                Subsignal("oe", Pins("B1 C3 C1 E3 D1 F4 G4 F2", dir="o")),
+                Attrs(IO_TYPE="LVCMOS33", PULLMODE="DOWN")
+            ),
+            Resource("debug_b", 0,
+                Subsignal("io", Pins("G2 H3 H4 J5 H2 K3 J2 K2", dir="io")),
+                Subsignal("oe", Pins("F1 G3 H5 J4 G1 J3 J1 K1", dir="o")),
+                Attrs(IO_TYPE="LVCMOS33", PULLMODE="DOWN")
+            ),
+            Resource("debug_c", 0,
+                Subsignal("io", Pins("B16 C14 C16 E14 D16 F13 G12 F15", dir="io")),
+                Subsignal("oe", Pins("B15 D14 C15 F14 E15 F12 G13 E16", dir="o")),
+                Attrs(IO_TYPE="LVCMOS33", PULLMODE="DOWN")
+            ),
+            Resource("debug_d", 0,
+                Subsignal("io", Pins("F16 G14 H12 J13 G16 J14 J16 K16", dir="io")),
+                Subsignal("oe", Pins("G15 H14 H13 J12 H15 K14 J15 K15", dir="o")),
+                Attrs(IO_TYPE="LVCMOS33", PULLMODE="DOWN")
+            ),
+        ])
+
 
 class GlasgowRevD0Platform(_GlasgowRevDPlatform):
     pass
